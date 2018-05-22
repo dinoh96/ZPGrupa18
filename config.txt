@@ -1,0 +1,4 @@
+RSA
+key usage
+subject directory attributes
+inhibit any policy
