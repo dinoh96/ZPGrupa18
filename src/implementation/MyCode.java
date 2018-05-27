@@ -6,29 +6,46 @@
  */
 package implementation;
 
+import java.util.Collection;
 import java.util.Date;
 import java.util.Enumeration;
+import java.util.Iterator;
 import java.util.Vector;
 
 import javax.security.auth.x500.X500Principal;
+
+import org.bouncycastle.asn1.ASN1Boolean;
 import org.bouncycastle.asn1.ASN1Encodable;
 import org.bouncycastle.asn1.ASN1Integer;
+import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.ASN1OctetString;
 import org.bouncycastle.asn1.ASN1Set;
 import org.bouncycastle.asn1.ASN1String;
+import org.bouncycastle.asn1.DERBitString;
 import org.bouncycastle.asn1.DEROutputStream;
+import org.bouncycastle.asn1.DLSet;
+import org.bouncycastle.asn1.x500.AttributeTypeAndValue;
+import org.bouncycastle.asn1.x500.DirectoryString;
+import org.bouncycastle.asn1.x500.RDN;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x500.X500NameBuilder;
 import org.bouncycastle.asn1.x500.style.BCStyle;
 import org.bouncycastle.asn1.x509.Attribute;
+
 import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.Extensions;
 import org.bouncycastle.asn1.x509.KeyUsage;
 import org.bouncycastle.asn1.x509.SubjectDirectoryAttributes;
+import org.bouncycastle.asn1.x509.SubjectKeyIdentifier;
+import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.X509v3CertificateBuilder;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder;
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
+import org.bouncycastle.cms.CMSProcessableByteArray;
+import org.bouncycastle.cms.CMSSignedData;
+import org.bouncycastle.cms.CMSSignedDataGenerator;
 import org.bouncycastle.jce.interfaces.ECPublicKey;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.openssl.PEMParser;
@@ -38,6 +55,7 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.bouncycastle.pkcs.PKCS10CertificationRequestBuilder;
 import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
+import org.bouncycastle.util.encoders.Base64;
 
 import code.GuiException;
 import x509.v3.CodeV3;
@@ -45,7 +63,13 @@ import gui.Constants;
 
 import java.io.*;
 import java.math.BigInteger;
-import java.security.*;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.Security;
+import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.security.interfaces.*;
@@ -53,7 +77,7 @@ import java.security.interfaces.*;
 public class MyCode extends CodeV3 {
 	private KeyStore keyStore;
 	private char[] password = "root".toCharArray();
-	PKCS10CertificationRequest csr;
+	private PKCS10CertificationRequest csr;
 
 	public MyCode(boolean[] algorithm_conf, boolean[] extensions_conf, boolean extensions_rules) throws GuiException {
 		super(algorithm_conf, extensions_conf, extensions_rules);
@@ -65,7 +89,6 @@ public class MyCode extends CodeV3 {
 			e.printStackTrace();
 		}
 		Security.addProvider(new BouncyCastleProvider());
-		access.setVersion(Constants.V3);
 		csr = null;
 	}
 
@@ -90,16 +113,20 @@ public class MyCode extends CodeV3 {
 			file += ".csr";
 		try {
 			X509Certificate cert = (X509Certificate) keyStore.getCertificate(keypair_name);
-
+			/*
 			KeyPairGenerator gen = KeyPairGenerator.getInstance(algorithm);
 			KeyPair pair = gen.generateKeyPair();
 			PrivateKey privateKey = pair.getPrivate();
 			PublicKey publicKey = pair.getPublic();
-			X500Principal subject = new X500Principal(getCertPublicKeyParameter(keypair_name));
+			*/
+			PrivateKey PR = (PrivateKey) keyStore.getKey(keypair_name, password);
+			PublicKey PU = cert.getPublicKey();
+			
+			X500Principal subject = new X500Principal(getSubjectInfo(keypair_name));
 
-			ContentSigner signGen = new JcaContentSignerBuilder(cert.getSigAlgName()).build(privateKey);
+			ContentSigner signGen = new JcaContentSignerBuilder(algorithm).build(PR);
 
-			PKCS10CertificationRequestBuilder builder = new JcaPKCS10CertificationRequestBuilder(subject, publicKey);
+			PKCS10CertificationRequestBuilder builder = new JcaPKCS10CertificationRequestBuilder(subject, PU);
 			csr = builder.build(signGen);
 
 			JcaPEMWriter out = new JcaPEMWriter(new FileWriter(file));
@@ -207,16 +234,34 @@ public class MyCode extends CodeV3 {
 	@Override
 	public String getSubjectInfo(String keypair_name) {
 		try {
-			String ret = new String("");
+			StringBuilder ret = new StringBuilder("");
 			X509Certificate cert = (X509Certificate) keyStore.getCertificate(keypair_name);
 			JcaX509CertificateHolder cHolder = new JcaX509CertificateHolder(cert);
 			X500Name sub = cHolder.getSubject();
+			
 			// C, S, L, O, OU, CN, SA
-			ret = "C=" + sub.getRDNs(BCStyle.C)[0].toString() + "" + " S=" + sub.getRDNs(BCStyle.ST)[0].toString() + ""
-					+ " L=" + sub.getRDNs(BCStyle.L)[0].toString() + "" + " O=" + sub.getRDNs(BCStyle.O)[0].toString()
-					+ "" + " OU =" + sub.getRDNs(BCStyle.OU)[0].toString() + "" + " CN="
-					+ sub.getRDNs(BCStyle.CN)[0].toString();
-			return ret;
+			boolean flag = false;
+			for(RDN tmp: sub.getRDNs()) {
+				AttributeTypeAndValue t = tmp.getFirst();
+				ASN1ObjectIdentifier tt = t.getType();
+				ASN1Encodable tv = t.getValue();
+				
+				if (tt == BCStyle.CN.intern())
+					ret.append((flag ? "," : "") + "CN=");
+				else if (tt == BCStyle.C.intern())
+					ret.append((flag ? "," : "") + "C=");
+				else if (tt == BCStyle.L.intern())
+					ret.append((flag ? "," : "") + "L=");
+				else if (tt == BCStyle.O.intern())
+					ret.append((flag ? "," : "") + "O=");
+				else if (tt == BCStyle.ST.intern())
+					ret.append((flag ? "," : "") + "ST=");
+				else if (tt == BCStyle.OU.intern())
+					ret.append((flag ? "," : "") + "OU=");
+				ret.append(tv.toString());
+				flag = true;
+			}
+			return ret.toString();
 		} catch (Exception e) {
 
 			e.printStackTrace();
@@ -224,16 +269,38 @@ public class MyCode extends CodeV3 {
 		return null;
 	}
 
+	@SuppressWarnings("unchecked")
 	@Override
-	/* TODO */public boolean importCAReply(String arg0, String arg1) {
+	public boolean importCAReply(String file, String keypair_name) {
+		try {
+			FileInputStream in = new FileInputStream(new File(file));
+			CertificateFactory fact = CertificateFactory.getInstance("X509");
+			Collection<Certificate> coll = (Collection<Certificate>) fact.generateCertificates(in);
+			Iterator<Certificate> it = (Iterator<Certificate>) coll.iterator();
+			
+			PrivateKey PR = (PrivateKey) keyStore.getKey(keypair_name, password);
 
-		return false;
+			Certificate[] chain = new Certificate[2];
+					
+			
+			
+			chain[0] = it.next();		
+			chain[1] = it.next();
+			keyStore.deleteEntry(keypair_name);
+			keyStore.setKeyEntry(keypair_name, PR, password,  chain);
+			
+			loadKeypair(keypair_name);
+		} catch (Exception e) {
+			e.printStackTrace();
+			return false;
+		}
+		return true;
 	}
 
 	@Override
 	public String importCSR(String file) {
 		PKCS10CertificationRequest tempCsr = null;
-		String ret = null;
+		StringBuilder ret = new StringBuilder("");
 		try {
 
 			Reader pemReader = new BufferedReader(new InputStreamReader(new FileInputStream(new File(file))));
@@ -245,19 +312,38 @@ public class MyCode extends CodeV3 {
 			}
 			pemParser.close();
 			pemReader.close();
+
 			if (tempCsr == null)
 				return null;
 			csr = tempCsr;
 			X500Name sub = csr.getSubject();
-			ret = "C=" + sub.getRDNs(BCStyle.C)[0].toString() + "" + " S=" + sub.getRDNs(BCStyle.ST)[0].toString() + ""
-					+ " L=" + sub.getRDNs(BCStyle.L)[0].toString() + "" + " O=" + sub.getRDNs(BCStyle.O)[0].toString()
-					+ "" + " OU =" + sub.getRDNs(BCStyle.OU)[0].toString() + "" + " CN="
-					+ sub.getRDNs(BCStyle.CN)[0].toString();
+			boolean flag = false;
+			
+			for(RDN tmp: sub.getRDNs()) {
+				AttributeTypeAndValue t = tmp.getFirst();
+				ASN1ObjectIdentifier tt = t.getType();
+				ASN1Encodable tv = t.getValue();
+				
+				if (tt == BCStyle.CN.intern())
+					ret.append((flag ? "," : "") + "CN=");
+				else if (tt == BCStyle.C.intern())
+					ret.append((flag ? "," : "") + "C=");
+				else if (tt == BCStyle.L.intern())
+					ret.append((flag ? "," : "") + "L=");
+				else if (tt == BCStyle.O.intern())
+					ret.append((flag ? "," : "") + "O=");
+				else if (tt == BCStyle.ST.intern())
+					ret.append((flag ? "," : "") + "ST=");
+				else if (tt == BCStyle.OU.intern())
+					ret.append((flag ? "," : "") + "OU=");
+				ret.append(tv.toString());
+				flag = true;
+			}
 
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
-		return ret;
+		return ret.toString();
 	}
 
 	@Override
@@ -293,12 +379,12 @@ public class MyCode extends CodeV3 {
 			f.close();
 		} catch (Exception e) {
 			e.printStackTrace();
-			// if (f != null) f.close();
 			return false;
 		}
 		return true;
 	}
 
+	@SuppressWarnings("unchecked")
 	@Override
 	public int loadKeypair(String keypair_name) {
 		/*
@@ -313,46 +399,74 @@ public class MyCode extends CodeV3 {
 			access.setNotBefore(certificate.getNotBefore());
 			access.setNotAfter(certificate.getNotAfter());
 			access.setSerialNumber(certificate.getSerialNumber().toString());
-
+			access.setVersion(certificate.getVersion() - 1);
 			JcaX509CertificateHolder cHolder = new JcaX509CertificateHolder(certificate);
 
-			access.setIssuer(cHolder.getIssuer().toString());
-			access.setIssuerSignatureAlgorithm(cHolder.getSignatureAlgorithm().toString());
+			access.setPublicKeyAlgorithm(getCertPublicKeyAlgorithm(keypair_name));
+			access.setPublicKeyParameter(getCertPublicKeyParameter(keypair_name));
+			access.setPublicKeyDigestAlgorithm(certificate.getSigAlgName());
+			access.setSubjectSignatureAlgorithm(certificate.getPublicKey().getAlgorithm());
+			// access.setIssuerSignatureAlgorithm(((X509Certificate)
+			// keyStore.getCertificateChain(keypair_name)[1]).getSigAlgName());
+			access.setIssuerSignatureAlgorithm(certificate.getSigAlgName());
 
-			// X500Name sub = cHolder.getSubject();
+			access.setIssuer(((X509Certificate) keyStore.getCertificate(keypair_name)).getIssuerDN().toString());
 
 			X500Name sub = cHolder.getSubject();
-
-			access.setSubjectCommonName(sub.getRDNs(BCStyle.CN)[0].toString());
-			access.setSubjectCountry(sub.getRDNs(BCStyle.C)[0].toString());
-			access.setSubjectLocality(sub.getRDNs(BCStyle.L)[0].toString());
-			access.setSubjectOrganization(sub.getRDNs(BCStyle.O)[0].toString());
-			access.setSubjectState(sub.getRDNs(BCStyle.ST)[0].toString());
-			access.setSubjectOrganizationUnit(sub.getRDNs(BCStyle.OU)[0].toString());
-
+			for(RDN tmp: sub.getRDNs()) {
+				AttributeTypeAndValue t = tmp.getFirst();
+				ASN1ObjectIdentifier tt = t.getType();
+				ASN1Encodable tv = t.getValue();
+				
+				if (tt == BCStyle.CN.intern())
+					access.setSubjectCommonName(tv.toString());
+				else if (tt == BCStyle.C.intern())
+				access.setSubjectCountry(tv.toString());
+				else if (tt == BCStyle.L.intern())
+					access.setSubjectLocality(tv.toString());
+				else if (tt == BCStyle.O.intern())
+					access.setSubjectOrganization(tv.toString());
+				else if (tt == BCStyle.ST.intern())
+					access.setSubjectState(tv.toString());
+				else if (tt == BCStyle.OU.intern())
+					access.setSubjectOrganizationUnit(tv.toString());
+			}
+			// Critical
+			for (String tmp : certificate.getCriticalExtensionOIDs()) {
+				if (tmp.equals(Extension.keyUsage.toString()))
+					access.setCritical(Constants.KU, true);
+				if (tmp.equals(Extension.subjectDirectoryAttributes.toString()))
+					access.setCritical(Constants.SDA, true);
+				if (tmp.equals(Extension.inhibitAnyPolicy.toString()))
+					access.setCritical(Constants.IAP, true);
+			}
+			// Key Usage
 			boolean[] key = certificate.getKeyUsage();
 			if (key != null)
 				access.setKeyUsage(certificate.getKeyUsage());
-
-			for (String tmp : certificate.getCriticalExtensionOIDs()) {
-				if (tmp.equals("KU"))
-					access.setCritical(Constants.KU, true);
-				if (tmp.equals("SDA"))
-					access.setCritical(Constants.SDA, true);
-				if (tmp.equals("IAP"))
-					access.setCritical(Constants.IAP, true);
-			}
 			// Subject Directory Attribute
 			Extension ext;
-			if ((ext = cHolder.getExtension(BCStyle.COUNTRY_OF_CITIZENSHIP)) != null)
-				access.setSubjectDirectoryAttribute(Constants.COC, ext.toString());
-			if ((ext = cHolder.getExtension(BCStyle.PLACE_OF_BIRTH)) != null)
-				access.setSubjectDirectoryAttribute(Constants.POB, ASN1OctetString.getInstance(ext.getParsedValue()).getOctets().toString());
-			
+			if ((ext = cHolder.getExtension(Extension.subjectDirectoryAttributes)) != null) {
+				Vector<Attribute> vect = (Vector<Attribute>) SubjectDirectoryAttributes
+						.getInstance(ext.getParsedValue()).getAttributes();
+				for (Attribute tmp : vect) {
+					if (tmp.getAttrType().toString().equals(BCStyle.COUNTRY_OF_CITIZENSHIP.toString()))
+						access.setSubjectDirectoryAttribute(Constants.COC, tmp.getAttributeValues()[0].toString());
+					if (tmp.getAttrType().toString().equals(BCStyle.PLACE_OF_BIRTH.toString()))
+						access.setSubjectDirectoryAttribute(Constants.POB, tmp.getAttributeValues()[0].toString());
+					if (tmp.getAttrType().toString().equals(BCStyle.GENDER.toString()))
+						access.setGender(tmp.getAttributeValues()[0].toString());
+					if (tmp.getAttrType().toString().equals(BCStyle.DATE_OF_BIRTH.toString()))
+						access.setDateOfBirth(tmp.getAttributeValues()[0].toString());
+				}
+			}
 			// Inhibit any policy
-			if ((ext = cHolder.getExtension(Extension.inhibitAnyPolicy)) != null)
+			if ((ext = cHolder.getExtension(Extension.inhibitAnyPolicy)) != null) {
+				access.setInhibitAnyPolicy(true);
 				access.setSkipCerts(ASN1Integer.getInstance(ext.getParsedValue()) + "");
-			
+			}
+
+			/*************** CHECK*THIS*OUT ****************/
 			if (keyStore.isCertificateEntry(keypair_name))
 				return 2;
 			if (!(new JcaX509CertificateHolder(certificate).getSubject().toString())
@@ -373,7 +487,7 @@ public class MyCode extends CodeV3 {
 		if (keyStore != null)
 			try {
 				keyStore = KeyStore.getInstance("PKCS12");
-				keyStore.load(new FileInputStream("localKeyStore.p12"), password);
+				keyStore.load(new FileInputStream("Dino.p12"), password);
 				return keyStore.aliases();
 			} catch (Exception e) {
 				e.printStackTrace();
@@ -409,7 +523,7 @@ public class MyCode extends CodeV3 {
 	}
 
 	@Override
-	/* TODO */public boolean saveKeypair(String keypair_name) {
+	public boolean saveKeypair(String keypair_name) {
 
 		try {
 
@@ -445,37 +559,73 @@ public class MyCode extends CodeV3 {
 			boolean[] ku = access.getKeyUsage();
 			boolean kuCrit = access.isCritical(Constants.KU);
 			int usage = 0;
-			int key = 1;
-			for (int i = 0; i < 8; i++) {
-				key <<= i;
+			for (int i = 0; i < 9; i++) {
 				if (ku[i])
-					usage |= key;
+					switch (i) {
+					case 0:
+						usage |= KeyUsage.digitalSignature;
+						break;
+					case 1:
+						usage |= KeyUsage.nonRepudiation;
+						break;
+					case 2:
+						usage |= KeyUsage.keyEncipherment;
+						break;
+					case 3:
+						usage |= KeyUsage.dataEncipherment;
+						break;
+					case 4:
+						usage |= KeyUsage.keyAgreement;
+						break;
+					case 5:
+						usage |= KeyUsage.keyCertSign;
+						break;
+					case 6:
+						usage |= KeyUsage.cRLSign;
+						break;
+					case 7:
+						usage |= KeyUsage.encipherOnly;
+						break;
+					case 8:
+						usage |= KeyUsage.decipherOnly;
+						break;
+					}
 			}
+
 			KeyUsage KU = new KeyUsage(usage);
 			generator.addExtension(Extension.keyUsage, kuCrit, KU);
 
 			// subject directory attributes extension
 			String sda_pob = access.getSubjectDirectoryAttribute(Constants.POB);
 			String sda_coc = access.getSubjectDirectoryAttribute(Constants.COC);
+			String sda_gen = access.getGender();
+			String sda_date = access.getDateOfBirth();
 			boolean sdaCrit = access.isCritical(Constants.SDA);
 
 			Vector<Attribute> vect = new Vector<Attribute>();
-			if (!sda_coc.equals("")) vect.add(new Attribute(BCStyle.COUNTRY_OF_CITIZENSHIP, ASN1Set.getInstance((Object)sda_coc)));
-			if (!sda_pob.equals("")) vect.add(new Attribute(BCStyle.PLACE_OF_BIRTH, ASN1Set.getInstance((Object)sda_pob)));
-			
-			SubjectDirectoryAttributes SDA = new SubjectDirectoryAttributes(vect);
 
+			if (!sda_coc.equals(""))
+				vect.add(new Attribute(BCStyle.COUNTRY_OF_CITIZENSHIP, new DLSet(new DirectoryString(sda_coc))));
+			if (!sda_pob.equals(""))
+				vect.add(new Attribute(BCStyle.PLACE_OF_BIRTH, new DLSet(new DirectoryString(sda_pob))));
+			if (!sda_gen.equals(""))
+				vect.add(new Attribute(BCStyle.GENDER, new DLSet(new DirectoryString(sda_gen))));
+			if (!sda_date.equals(""))
+				vect.add(new Attribute(BCStyle.DATE_OF_BIRTH, new DLSet(new DirectoryString(sda_date))));
+
+			SubjectDirectoryAttributes SDA = new SubjectDirectoryAttributes(vect);
 			generator.addExtension(Extension.subjectDirectoryAttributes, sdaCrit, SDA);
 
 			// inhibit any policy extension
 			boolean iap = access.getInhibitAnyPolicy();
 			boolean iapCrit = access.isCritical(Constants.IAP);
 			if (iap) {
-				/****************** OVO*NIJE*KAKO*TREBA *****************/
-				int skipCerts = Integer.parseInt(access.getSkipCerts());
-				if (skipCerts < 0)
+				int skipCerts;
+				if (access.getSkipCerts().equals("") || access.getSkipCerts().charAt(0) == '-')
 					skipCerts = Integer.MAX_VALUE;
-				/******************************************************/
+				else
+					skipCerts = Integer.parseInt(access.getSkipCerts());
+
 				ASN1Integer IAP = new ASN1Integer(skipCerts);
 				generator.addExtension(Extension.inhibitAnyPolicy, iapCrit, IAP);
 			}
@@ -495,35 +645,41 @@ public class MyCode extends CodeV3 {
 	}
 
 	@Override
-	/* TODO */public boolean signCSR(String file, String keypair_name, String algorithm) {
-		/*
-		 * if (!file.matches(".*.p7(b|c)")) file += ".p7b"; try { X509Certificate issuer
-		 * = (X509Certificate) keyStore.getCertificate(keypair_name);
-		 * X509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(issuer,
-		 * cert.getSerialNumber(), access.getNotBefore(), access.getNotAfter(),
-		 * csr.getSubject(), cert.getPublicKey());
-		 * 
-		 * Attribute[] attributes = (Attribute[]) csr.getAttributes();
-		 * 
-		 * Iterator iterator = (Iterator) attributes[0].getAttrValues().iterator();
-		 * Extensions extensions = (Extensions) iterator.next(); ASN1ObjectIdentifier[]
-		 * OIDs = extensions.getExtensionOIDs(); for (int i = 0; i < OIDs.length; i++) {
-		 * builder.addExtension(extensions.getExtension(OIDs[i])); }
-		 * 
-		 * ContentSigner signer; signer = new JcaContentSignerBuilder(arg1)
-		 * .build((PrivateKey) keyStore.getKey(arg0, "password".toCharArray()));
-		 * 
-		 * X509Certificate newCert = new
-		 * JcaX509CertificateConverter().getCertificate(builder.build(signer));
-		 * X509Certificate[] issuerChain = keyStore.getCertificateChain(arg0);
-		 * X509Certificate[] chain = new X509Certificate[issuerChain.length + 1];
-		 * chain[0] = newCert; for (int i = 0; i < issuerChain.length; i++) { chain[i +
-		 * 1] = (X509Certificate) issuerChain[i]; } keyStore.setKeyEntry(selected,
-		 * keyStore.getKey(selected, "password".toCharArray()),
-		 * "password".toCharArray(), chain);
-		 * 
-		 * return true; }catch(Exception e) { e.printStackTrace(); }
-		 */
+	public boolean signCSR(String file, String keypair_name, String algorithm) {
+
+		if (!file.matches(".*.p7(b|c)"))
+			file += ".p7b";
+		try {
+			X509CertificateHolder issuerHolder = new JcaX509CertificateHolder(
+					(X509Certificate) keyStore.getCertificate(keypair_name));
+			X509v3CertificateBuilder builder = new X509v3CertificateBuilder(issuerHolder.getSubject(),
+					new BigInteger(access.getSerialNumber()), access.getNotBefore(), access.getNotAfter(),
+					csr.getSubject(), csr.getSubjectPublicKeyInfo());
+
+
+			ContentSigner signer = new JcaContentSignerBuilder(algorithm).build((PrivateKey) keyStore.getKey(keypair_name, password));
+			
+			byte[] encoded = builder.build(signer).getEncoded();
+			X509CertificateHolder cHolder = new X509CertificateHolder(encoded);
+			X509CertificateHolder CAHolder = new X509CertificateHolder(((X509Certificate) keyStore.getCertificate(keypair_name)).getEncoded());
+			
+			CMSSignedDataGenerator generator = new CMSSignedDataGenerator(); // PKCS7
+			generator.addCertificate(cHolder);
+			generator.addCertificate(CAHolder);
+			
+			CMSSignedData data = generator.generate(new CMSProcessableByteArray(encoded), true);
+			
+			FileOutputStream out = new FileOutputStream(file);
+			out.write("-----BEGIN PKCS #7 SIGNED DATA-----\n".getBytes("ISO-8859-1"));
+			out.write(Base64.encode(data.getEncoded()));
+			out.write("\n-----END PKCS #7 SIGNED DATA-----\n".getBytes("ISO-8859-1"));
+			out.close();
+			
+			return true;
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+
 		return false;
 	}
 }
