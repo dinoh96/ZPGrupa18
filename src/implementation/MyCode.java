@@ -11,15 +11,12 @@ import java.util.Date;
 import java.util.Enumeration;
 import java.util.Iterator;
 import java.util.Vector;
-import java.util.regex.Pattern;
 
 import javax.security.auth.x500.X500Principal;
 
 import org.bouncycastle.asn1.ASN1Encodable;
 import org.bouncycastle.asn1.ASN1Integer;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
-import org.bouncycastle.asn1.ASN1OutputStream;
-import org.bouncycastle.asn1.DEROutputStream;
 import org.bouncycastle.asn1.DLSet;
 import org.bouncycastle.asn1.x500.AttributeTypeAndValue;
 import org.bouncycastle.asn1.x500.DirectoryString;
@@ -39,11 +36,9 @@ import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
 import org.bouncycastle.cms.CMSProcessableByteArray;
 import org.bouncycastle.cms.CMSSignedData;
 import org.bouncycastle.cms.CMSSignedDataGenerator;
-import org.bouncycastle.cms.CMSTypedData;
 import org.bouncycastle.cms.jcajce.JcaSignerInfoGeneratorBuilder;
 import org.bouncycastle.jce.interfaces.ECPublicKey;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
-import org.bouncycastle.openssl.MiscPEMGenerator;
 import org.bouncycastle.openssl.PEMParser;
 import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
 import org.bouncycastle.operator.ContentSigner;
@@ -52,11 +47,6 @@ import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
 import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.bouncycastle.pkcs.PKCS10CertificationRequestBuilder;
 import org.bouncycastle.pkcs.jcajce.JcaPKCS10CertificationRequestBuilder;
-import org.bouncycastle.util.Store;
-import org.bouncycastle.util.encoders.Base64;
-import org.bouncycastle.util.io.pem.PemObject;
-import org.bouncycastle.util.io.pem.PemObjectGenerator;
-import org.bouncycastle.util.io.pem.PemWriter;
 
 import code.GuiException;
 import x509.v3.CodeV3;
@@ -87,13 +77,6 @@ public class MyCode extends CodeV3 {
 
 	public MyCode(boolean[] algorithm_conf, boolean[] extensions_conf, boolean extensions_rules) throws GuiException {
 		super(algorithm_conf, extensions_conf, extensions_rules);
-
-		try {
-			keyStore = KeyStore.getInstance("PKCS12");
-			keyStore.load(null, null);
-		} catch (Exception e) {
-			e.printStackTrace();
-		}
 		Security.addProvider(new BouncyCastleProvider());
 		csr = null;
 	}
@@ -283,9 +266,9 @@ public class MyCode extends CodeV3 {
 
 			chain[0] = it.next();
 			chain[1] = it.next();
-			// keyStore.deleteEntry(keypair_name);
+			
 			keyStore.setKeyEntry(keypair_name, PR, password, chain);
-
+			saveKeyStore();
 			loadKeypair(keypair_name);
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -344,7 +327,7 @@ public class MyCode extends CodeV3 {
 	}
 
 	@Override
-	
+
 	public boolean importCertificate(String file, String keypair_name) {
 		if (!file.matches(".*.cer"))
 			return false;
@@ -358,6 +341,7 @@ public class MyCode extends CodeV3 {
 			inStream.close();
 
 			keyStore.setCertificateEntry(keypair_name, cert);
+			saveKeyStore();
 			loadKeypair(keypair_name);
 			return true;
 		} catch (Exception e) {
@@ -378,7 +362,7 @@ public class MyCode extends CodeV3 {
 			f.close();
 			keyStore.setKeyEntry(keypair_name, ks.getKey(keypair_name, password.toCharArray()), this.password,
 					ks.getCertificateChain(keypair_name));
-
+			saveKeyStore();
 		} catch (Exception e) {
 			e.printStackTrace();
 			return false;
@@ -471,7 +455,6 @@ public class MyCode extends CodeV3 {
 					access.setSkipCerts(ASN1Integer.getInstance(ext.getParsedValue()) + "");
 				}
 			}
-			
 
 			if (keyStore.isCertificateEntry(keypair_name))
 				return 2;
@@ -492,14 +475,17 @@ public class MyCode extends CodeV3 {
 	@Override
 	public Enumeration<String> loadLocalKeystore() {
 
-		if (keyStore != null)
-			try {
-				keyStore = KeyStore.getInstance("PKCS12");
-				keyStore.load(new FileInputStream("local.p12"), password);
-				return keyStore.aliases();
-			} catch (Exception e) {
-				e.printStackTrace();
-			}
+		try {
+			File file = new File("local.p12");
+			FileInputStream in = (file.createNewFile()) ? null : new FileInputStream(file);
+			keyStore = KeyStore.getInstance("PKCS12");
+			keyStore.load(in, (password == null) ? "root".toCharArray() : password);
+			if (in != null) in.close();
+
+			return keyStore.aliases();
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
 
 		return null;
 	}
@@ -509,6 +495,7 @@ public class MyCode extends CodeV3 {
 
 		try {
 			keyStore.deleteEntry(keypair_name);
+			saveKeyStore();
 		} catch (Exception e) {
 			e.printStackTrace();
 			return false;
@@ -521,10 +508,15 @@ public class MyCode extends CodeV3 {
 	public void resetLocalKeystore() {
 		try {
 			Enumeration<String> e = keyStore.aliases();
-			while (e.hasMoreElements()) {
-				keyStore.deleteEntry(e.nextElement());
+			Vector<String> vect = new Vector<String>();
+			while (e.hasMoreElements()) 
+				vect.add(e.nextElement());
+			for(Iterator<String> it = vect.iterator(); it.hasNext();) {
+				String alias = it.next();
+				System.out.println(alias);
+				keyStore.deleteEntry(alias);
 			}
-
+			saveKeyStore();
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
@@ -537,7 +529,7 @@ public class MyCode extends CodeV3 {
 
 			if (access.getVersion() != Constants.V3)
 				return false;
-			
+
 			CertificateFactory.getInstance("X.509");
 			KeyPairGenerator g = KeyPairGenerator.getInstance("RSA");
 			g.initialize(Integer.parseInt(access.getPublicKeyParameter()));
@@ -648,6 +640,7 @@ public class MyCode extends CodeV3 {
 			chain[0] = cert;
 
 			keyStore.setKeyEntry(keypair_name, PR, password, chain);
+			saveKeyStore();
 		} catch (Exception e) {
 			e.printStackTrace();
 			return false;
@@ -780,7 +773,7 @@ public class MyCode extends CodeV3 {
 			CMSSignedData data = generator.generate(new CMSProcessableByteArray(encoded), true);
 
 			FileOutputStream out = new FileOutputStream(file);
-			
+
 			out.write(data.getEncoded());
 			out.close();
 			return true;
@@ -789,5 +782,15 @@ public class MyCode extends CodeV3 {
 		}
 
 		return false;
+	}
+
+	private void saveKeyStore() {
+		try {
+			FileOutputStream out = new FileOutputStream("local.p12");
+			keyStore.store(out, (password == null) ? "root".toCharArray() : password);
+			out.close();
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
 	}
 }
